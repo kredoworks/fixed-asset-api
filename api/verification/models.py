@@ -1,21 +1,21 @@
 # api/verification/models.py
 from datetime import datetime
-from pydantic import BaseModel, Field
-from datetime import datetime
+from pydantic import BaseModel, ConfigDict, Field
 from typing import List, Optional
 
 
 class AssetSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     asset_code: str
     name: str
     is_active: bool
 
-    class Config:
-        from_attributes = True  # Pydantic v2 ORM mode
-
 
 class VerificationSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     source: str
     status: str
@@ -27,9 +27,6 @@ class VerificationSummary(BaseModel):
     location_lng: float | None = None
     override_of_verification_id: int | None = None
 
-    class Config:
-        from_attributes = True
-
 
 class AssetLookupResponse(BaseModel):
     not_found: bool
@@ -38,13 +35,12 @@ class AssetLookupResponse(BaseModel):
     already_verified: bool = False
 
 class SearchAssetResult(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     asset_code: str
     name: str
     is_active: bool
-
-    class Config:
-        from_attributes = True
 
 
 class SearchAssetResponse(BaseModel):
@@ -79,6 +75,8 @@ class NewAssetCreate(BaseModel):
 
 
 class NewAssetResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     asset_id: int
     asset_code: str
     name: str
@@ -87,6 +85,3 @@ class NewAssetResponse(BaseModel):
     verification_status: str
     verification_source: str
     verification_created_at: datetime | None = None
-
-    class Config:
-        from_attributes = True

@@ -1,6 +1,6 @@
 # api/route1/models.py
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class CycleCreate(BaseModel):
@@ -8,11 +8,10 @@ class CycleCreate(BaseModel):
 
 
 class CycleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: int
     tag: str
     status: str
     created_at: datetime
     locked_at: datetime | None = None
-
-    class Config:
-        from_attributes = True  # Pydantic v2: enable ORM mode
