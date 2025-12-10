@@ -1,0 +1,11 @@
+asset_code,asset_name,category,location,cost,purchase_date
+AST001,Dell Laptop XPS 15,IT Equipment,Main Office,1299.99,1/15/2023
+AST002,HP Printer LaserJet,IT Equipment,Main Office,459.99,1/20/2023
+AST003,Executive Office Chair,Furniture,CEO Office,599,2/1/2023
+AST004,Conference Table,Furniture,Meeting Room 1,1200,2/10/2023
+AST005,Projector Epson,IT Equipment,Meeting Room 1,899.99,2/15/2023
+AST006,Desktop Computer,IT Equipment,Accounting Dept,799.99,3/1/2023
+AST007,Standing Desk,Furniture,Dev Team Area,449.99,3/5/2023
+AST008,iPhone 14,Mobile Devices,Sales Manager,999.99,3/10/2023
+AST009,iPad Pro,Mobile Devices,CEO,1099.99,3/15/2023
+AST010,MacBook Pro,IT Equipment,Design Team,2499.99,3/20/2023

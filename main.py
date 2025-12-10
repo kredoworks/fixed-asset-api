@@ -1,20 +1,20 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
-# Load configuration
-from config import settings
+from api.cycles.views import router as cycles_router
+from api.verification.views import router as verification_router
 
-print("Loaded settings:", settings.model_dump())
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup/shutdown logic if needed
+    yield
 
-@app.get("/")
-async def read_root():
-    return {"message": "Hello, World!"}
 
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
+app = FastAPI(
+    title="Fixed Asset API",
+    lifespan=lifespan,
+)
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+app.include_router(cycles_router, prefix="/api/v1")
+app.include_router(verification_router, prefix="/api/v1")
