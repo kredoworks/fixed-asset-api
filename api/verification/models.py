@@ -85,3 +85,81 @@ class NewAssetResponse(BaseModel):
     verification_status: str
     verification_source: str
     verification_created_at: datetime | None = None
+
+
+# --- Photo Upload Models ---
+class PhotoUploadResponse(BaseModel):
+    keys: List[str]
+
+
+# --- Verification Create Models (with duplicate detection) ---
+class VerificationCreate(BaseModel):
+    performed_by: Optional[str] = None
+    source: str = "SELF"  # SELF | AUDITOR
+    status: str = "VERIFIED"  # VERIFIED | DISCREPANCY | NOT_FOUND | NEW_ASSET
+    condition: Optional[str] = None  # GOOD | DAMAGED | NEEDS_REPAIR
+    location_lat: Optional[float] = None
+    location_lng: Optional[float] = None
+    photos: Optional[List[str]] = None
+    notes: Optional[str] = None
+    allow_duplicate: bool = False  # Client must set true to force create duplicate
+
+
+class VerificationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    asset_id: int
+    cycle_id: int
+    performed_by: Optional[str] = None
+    source: str
+    status: str
+    condition: Optional[str] = None
+    location_lat: Optional[float] = None
+    location_lng: Optional[float] = None
+    photos: Optional[str] = None
+    notes: Optional[str] = None
+    override_of_verification_id: Optional[int] = None
+    override_reason: Optional[str] = None
+    created_at: datetime
+    verified_at: Optional[datetime] = None
+
+
+class DuplicateResponse(BaseModel):
+    duplicate: bool = True
+    existing_verification: VerificationResponse
+
+
+# --- Override Models ---
+class OverrideCreate(BaseModel):
+    performed_by: Optional[str] = None
+    source: str = "OVERRIDDEN"  # Should be OVERRIDDEN
+    status: str  # New status
+    condition: Optional[str] = None
+    location_lat: Optional[float] = None
+    location_lng: Optional[float] = None
+    photos: Optional[List[str]] = None
+    notes: Optional[str] = None
+    override_reason: str  # Required: explain why overriding
+
+
+# --- Asset-Cycle Detail with History ---
+class AssetCycleDetailResponse(BaseModel):
+    effective_verification: Optional[VerificationResponse] = None
+    history: List[VerificationResponse]
+
+
+# --- Pending Assets ---
+class PendingAsset(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    asset_code: str
+    name: str
+    is_active: bool
+
+
+class PendingAssetsResponse(BaseModel):
+    cycle_id: int
+    pending_count: int
+    assets: List[PendingAsset]

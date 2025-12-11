@@ -1,15 +1,41 @@
 # api/verification/views.py
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import os
+import uuid
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import get_session
-from .models import AssetLookupResponse, AssetSummary, VerificationSummary,SearchAssetResponse, SearchAssetResult,NewAssetCreate, NewAssetResponse 
+from .models import (
+    AssetLookupResponse,
+    AssetSummary,
+    VerificationSummary,
+    SearchAssetResponse,
+    SearchAssetResult,
+    NewAssetCreate,
+    NewAssetResponse,
+    PhotoUploadResponse,
+    VerificationCreate,
+    VerificationResponse,
+    DuplicateResponse,
+    OverrideCreate,
+    AssetCycleDetailResponse,
+    PendingAsset,
+    PendingAssetsResponse,
+)
 from . import db_manager
 
+# Asset-focused router
 router = APIRouter(
     prefix="/verification/assets",
     tags=["verification"],
 )
+
+# Configure upload directory (local fallback; switch to S3/cloud in production)
+UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "uploads"))
+UPLOAD_DIR.mkdir(exist_ok=True)
 
 
 @router.get(
@@ -91,7 +117,22 @@ async def create_new_asset_endpoint(
 ) -> NewAssetResponse:
     """
     Create a new asset and an initial verification record in the specified cycle.
+    Enforces cycle lock - returns 409 if cycle is LOCKED.
     """
+    # Cycle lock enforcement: check before any writes
+    try:
+        await db_manager.check_cycle_not_locked(db, payload.cycle_id)
+    except db_manager.CycleLockedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except db_manager.CycleNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
     try:
         new_asset, verification = await db_manager.create_asset_and_initial_verification(
             db,
@@ -123,4 +164,221 @@ async def create_new_asset_endpoint(
         verification_status=verification.status,
         verification_source=verification.source,
         verification_created_at=verification.created_at,
+    )
+
+
+# --- Photo Upload Endpoint ---
+@router.post(
+    "/uploads/photo",
+    response_model=PhotoUploadResponse,
+    summary="Upload verification photos",
+    tags=["uploads"],
+)
+async def upload_photos(
+    files: list[UploadFile] = File(..., description="Photo files to upload"),
+) -> PhotoUploadResponse:
+    """
+    Accept multipart upload of photos, store locally (or configured storage).
+    Returns array of file keys that can be passed to verification endpoints.
+    """
+    keys = []
+    for file in files:
+        # Generate unique key for file
+        ext = Path(file.filename).suffix if file.filename else ".jpg"
+        file_key = f"{uuid.uuid4()}{ext}"
+        file_path = UPLOAD_DIR / file_key
+
+        # Save file
+        content = await file.read()
+        with open(file_path, "wb") as f:
+            f.write(content)
+
+        keys.append(file_key)
+
+    return PhotoUploadResponse(keys=keys)
+
+
+# --- Create Verification (with duplicate detection and cycle lock) ---
+@router.post(
+    "/{asset_id}/cycles/{cycle_id}",
+    responses={
+        201: {"model": VerificationResponse, "description": "Verification created"},
+        200: {"model": DuplicateResponse, "description": "Duplicate exists"},
+        409: {"description": "Cycle is locked"},
+        423: {"description": "Cycle is locked"},
+    },
+    summary="Create verification for asset in cycle",
+)
+async def create_verification_endpoint(
+    asset_id: int,
+    cycle_id: int,
+    payload: VerificationCreate,
+    db: AsyncSession = Depends(get_session),
+):
+    """
+    Create a new verification record for asset in cycle.
+
+    - If cycle is LOCKED: returns 409/423.
+    - If duplicate exists and allow_duplicate=False: returns 200 with duplicate info.
+    - If allowed or no duplicate: creates and returns 201.
+    """
+    try:
+        new_verification, existing, is_duplicate = await db_manager.create_verification(
+            db,
+            asset_id=asset_id,
+            cycle_id=cycle_id,
+            performed_by=payload.performed_by,
+            source=payload.source,
+            status=payload.status,
+            condition=payload.condition,
+            location_lat=payload.location_lat,
+            location_lng=payload.location_lng,
+            photos=payload.photos,
+            notes=payload.notes,
+            allow_duplicate=payload.allow_duplicate,
+        )
+    except db_manager.CycleLockedError as exc:
+        # Cycle is locked - no edits allowed (spec: 409 or 423)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except db_manager.CycleNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except db_manager.AssetNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    if is_duplicate and existing:
+        # Return 200 with duplicate info (client must decide to re-submit with allow_duplicate=true)
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "duplicate": True,
+                "existing_verification": VerificationResponse.model_validate(existing).model_dump(mode="json"),
+            },
+        )
+
+    # Created successfully
+    return JSONResponse(
+        status_code=status.HTTP_201_CREATED,
+        content=VerificationResponse.model_validate(new_verification).model_dump(mode="json"),
+    )
+
+
+# --- Get Asset-Cycle Detail with History ---
+@router.get(
+    "/{asset_id}/cycles/{cycle_id}",
+    response_model=AssetCycleDetailResponse,
+    summary="Get effective verification and history for asset in cycle",
+)
+async def get_asset_cycle_detail_endpoint(
+    asset_id: int,
+    cycle_id: int,
+    db: AsyncSession = Depends(get_session),
+) -> AssetCycleDetailResponse:
+    """
+    Returns the effective verification (latest OVERRIDDEN or latest overall)
+    and full history for an asset in a cycle.
+    """
+    try:
+        effective, history = await db_manager.get_asset_cycle_detail(db, asset_id, cycle_id)
+    except db_manager.AssetNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except db_manager.CycleNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    return AssetCycleDetailResponse(
+        effective_verification=VerificationResponse.model_validate(effective) if effective else None,
+        history=[VerificationResponse.model_validate(v) for v in history],
+    )
+
+
+# --- Additional router for non-asset endpoints (uploads, overrides, pending) ---
+verification_router = APIRouter(
+    prefix="/verification",
+    tags=["verification"],
+)
+
+
+# --- Override Verification Endpoint ---
+@verification_router.post(
+    "/{verification_id}/override",
+    response_model=VerificationResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Override an existing verification",
+)
+async def override_verification_endpoint(
+    verification_id: int,
+    payload: OverrideCreate,
+    db: AsyncSession = Depends(get_session),
+) -> VerificationResponse:
+    """
+    Create an override for an existing verification.
+    Sets source='OVERRIDDEN' and links to original via override_of_verification_id.
+    """
+    try:
+        override = await db_manager.create_override(
+            db,
+            verification_id=verification_id,
+            performed_by=payload.performed_by,
+            source=payload.source,
+            status=payload.status,
+            condition=payload.condition,
+            location_lat=payload.location_lat,
+            location_lng=payload.location_lng,
+            photos=payload.photos,
+            notes=payload.notes,
+            override_reason=payload.override_reason,
+        )
+    except db_manager.CycleLockedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except db_manager.VerificationNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    return VerificationResponse.model_validate(override)
+
+
+# --- Pending Assets Endpoint ---
+@verification_router.get(
+    "/pending",
+    response_model=PendingAssetsResponse,
+    summary="List assets without verification in cycle",
+)
+async def get_pending_assets_endpoint(
+    cycle_id: int = Query(..., description="Verification cycle ID"),
+    db: AsyncSession = Depends(get_session),
+) -> PendingAssetsResponse:
+    """
+    Returns all active assets that do NOT have any verification in the specified cycle.
+    """
+    try:
+        pending = await db_manager.get_pending_assets(db, cycle_id)
+    except db_manager.CycleNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+    return PendingAssetsResponse(
+        cycle_id=cycle_id,
+        pending_count=len(pending),
+        assets=[PendingAsset.model_validate(a) for a in pending],
     )

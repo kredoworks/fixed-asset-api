@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(poetry run python:*)",
-      "Bash(poetry run pytest:*)"
+      "Bash(poetry run pytest:*)",
+      "Bash(dir /s c:UsersAdminDocumentsgithubfixed-asset-apiapi)",
+      "Bash(dir /b \"c:\\Users\\Admin\\Documents\\github\\fixed-asset-api\\alembic\\versions\")",
+      "Bash(poetry add:*)"
     ]
   }
 }

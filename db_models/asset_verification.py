@@ -7,6 +7,7 @@ from sqlalchemy import (
     Float,
     Text,
     ForeignKey,
+    Index,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -18,6 +19,10 @@ from db_models.verification_cycle import VerificationCycle
 
 class AssetVerification(Base):
     __tablename__ = "asset_verifications"
+    # Composite index for efficient lookups by asset+cycle (spec requirement)
+    __table_args__ = (
+        Index("ix_asset_cycle", "asset_id", "cycle_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
 
