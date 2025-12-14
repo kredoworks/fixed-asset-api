@@ -2,7 +2,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.auth.views import router as auth_router
 from api.cycles.views import router as cycles_router
+from api.dashboard.views import router as dashboard_router
 from api.verification.views import router as verification_assets_router
 from api.verification.views import verification_router
 
@@ -14,7 +16,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Fixed Asset API",
+    title="Fixed Asset Verification API",
+    description="API for managing fixed asset verification cycles and audits",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -26,6 +30,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Authentication endpoints
+app.include_router(auth_router, prefix="/api/v1")
+
+# Business endpoints
 app.include_router(cycles_router, prefix="/api/v1")
+app.include_router(dashboard_router, prefix="/api/v1")
 app.include_router(verification_assets_router, prefix="/api/v1")
 app.include_router(verification_router, prefix="/api/v1")
+
+
+# Health check endpoint
+@app.get("/health", tags=["system"])
+async def health_check():
+    """Health check endpoint for monitoring."""
+    return {"status": "healthy"}

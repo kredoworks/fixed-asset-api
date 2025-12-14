@@ -11,6 +11,8 @@ from main import app as fastapi_app
 import db as project_db
 import db_models  # ensure models are imported
 from db_models.asset import Asset
+from db_models.user import User
+from core.security import get_password_hash, create_access_token
 
 # TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
 TEST_DATABASE_URL = "postgresql+asyncpg://postgres:1234567@localhost:5432/fixed_asset_test_db"
@@ -64,12 +66,8 @@ async def db_session():
 
 @pytest.fixture(scope="session", autouse=True)
 def seed_assets(prepare_db):
-    """Seed sample assets from CSV into the test database"""
+    """Seed sample assets from CSV and test users into the test database"""
     csv_path = Path(__file__).parent / "sample_assets.csv"
-
-    if not csv_path.exists():
-        print(f"Warning: {csv_path} not found, skipping seed")
-        return
 
     # Use synchronous SQLAlchemy for session-scoped fixture
     from sqlalchemy import create_engine
@@ -79,19 +77,47 @@ def seed_assets(prepare_db):
     Session = sessionmaker(bind=sync_engine)
 
     with Session() as session:
-        # Read and insert assets from CSV
-        with open(csv_path, newline='', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                asset = Asset(
-                    asset_code=row['asset_code'],
-                    name=row['asset_name'],  # CSV uses 'asset_name' but DB uses 'name'
-                    is_active=True
-                )
-                session.add(asset)
-
+        # Create test users
+        admin_user = User(
+            email="admin@test.com",
+            hashed_password=get_password_hash("adminpass"),
+            full_name="Test Admin",
+            role="ADMIN",
+            is_active=True,
+        )
+        auditor_user = User(
+            email="auditor@test.com",
+            hashed_password=get_password_hash("auditorpass"),
+            full_name="Test Auditor",
+            role="AUDITOR",
+            is_active=True,
+        )
+        owner_user = User(
+            email="owner@test.com",
+            hashed_password=get_password_hash("ownerpass"),
+            full_name="Test Owner",
+            role="OWNER",
+            is_active=True,
+        )
+        session.add_all([admin_user, auditor_user, owner_user])
         session.commit()
-        print(f"Seeded {session.query(Asset).count()} assets from {csv_path}")
+        print(f"Created test users: admin (id={admin_user.id}), auditor (id={auditor_user.id}), owner (id={owner_user.id})")
+
+        # Seed assets from CSV if exists
+        if csv_path.exists():
+            with open(csv_path, newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    asset = Asset(
+                        asset_code=row['asset_code'],
+                        name=row['asset_name'],  # CSV uses 'asset_name' but DB uses 'name'
+                        is_active=True
+                    )
+                    session.add(asset)
+            session.commit()
+            print(f"Seeded {session.query(Asset).count()} assets from {csv_path}")
+        else:
+            print(f"Warning: {csv_path} not found, skipping asset seed")
 
 @pytest.fixture
 async def async_client():
@@ -107,3 +133,39 @@ async def async_client():
 
     # Clean up
     fastapi_app.dependency_overrides.clear()
+
+
+@pytest.fixture(scope="session")
+def admin_token():
+    """Generate an admin JWT token for tests."""
+    return create_access_token(data={"sub": "1", "type": "access"})
+
+
+@pytest.fixture(scope="session")
+def auditor_token():
+    """Generate an auditor JWT token for tests."""
+    return create_access_token(data={"sub": "2", "type": "access"})
+
+
+@pytest.fixture(scope="session")
+def owner_token():
+    """Generate an owner JWT token for tests."""
+    return create_access_token(data={"sub": "3", "type": "access"})
+
+
+@pytest.fixture(scope="session")
+def admin_headers(admin_token):
+    """Return authorization headers for admin user."""
+    return {"Authorization": f"Bearer {admin_token}"}
+
+
+@pytest.fixture(scope="session")
+def auditor_headers(auditor_token):
+    """Return authorization headers for auditor user."""
+    return {"Authorization": f"Bearer {auditor_token}"}
+
+
+@pytest.fixture(scope="session")
+def owner_headers(owner_token):
+    """Return authorization headers for owner user."""
+    return {"Authorization": f"Bearer {owner_token}"}

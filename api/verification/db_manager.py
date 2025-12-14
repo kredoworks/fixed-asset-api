@@ -64,16 +64,14 @@ async def lookup_asset_for_cycle(
     return asset, effective, already_verified
 
 async def search_assets(db: AsyncSession, query_text: str) -> list[Asset]:
+    """Search assets by code or name (case-insensitive partial match)."""
     stmt = queries.search_assets_query(query_text)
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
 
-class CycleNotFoundError(Exception):
-    pass
-
-
 class AssetAlreadyExistsError(Exception):
+    """Raised when trying to create an asset with an existing code."""
     pass
 
 
@@ -128,11 +126,7 @@ async def create_asset_and_initial_verification(
         raise AssetAlreadyExistsError(f"Asset with code {asset_code} already exists") from exc
 
     # Create verification record
-    photos_text = None
-    if photos:
-        # store as JSON-like string for now (you can change to JSONB later)
-        import json
-        photos_text = json.dumps(photos)
+    photos_text = json.dumps(photos) if photos else None
 
     verification = AssetVerification(
         asset_id=new_asset.id,

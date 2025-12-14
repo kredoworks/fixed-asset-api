@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db import get_session
+from core.deps import CurrentUser, CanVerify, AuditorOrAdmin
 from .models import (
     AssetLookupResponse,
     AssetSummary,
@@ -44,6 +45,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
     summary="Lookup asset by code for a given verification cycle",
 )
 async def lookup_asset_endpoint(
+    current_user: CurrentUser,
     asset_code: str = Query(..., min_length=1, description="Asset code / barcode"),
     cycle_id: int = Query(..., description="Verification cycle ID"),
     db: AsyncSession = Depends(get_session),
@@ -95,6 +97,7 @@ async def lookup_asset_endpoint(
     summary="Manual search for assets by asset_code or name",
 )
 async def search_assets_endpoint(
+    current_user: CurrentUser,
     q: str = Query(..., min_length=1, description="Search text"),
     db: AsyncSession = Depends(get_session),
 ) -> SearchAssetResponse:
@@ -113,6 +116,7 @@ async def search_assets_endpoint(
 )
 async def create_new_asset_endpoint(
     payload: NewAssetCreate,
+    current_user: AuditorOrAdmin,  # Only auditors and admins can create new assets
     db: AsyncSession = Depends(get_session),
 ) -> NewAssetResponse:
     """
@@ -175,6 +179,7 @@ async def create_new_asset_endpoint(
     tags=["uploads"],
 )
 async def upload_photos(
+    current_user: CanVerify,  # Only users who can verify can upload photos
     files: list[UploadFile] = File(..., description="Photo files to upload"),
 ) -> PhotoUploadResponse:
     """
@@ -213,6 +218,7 @@ async def create_verification_endpoint(
     asset_id: int,
     cycle_id: int,
     payload: VerificationCreate,
+    current_user: CanVerify,  # Requires verification permissions
     db: AsyncSession = Depends(get_session),
 ):
     """
@@ -280,6 +286,7 @@ async def create_verification_endpoint(
 async def get_asset_cycle_detail_endpoint(
     asset_id: int,
     cycle_id: int,
+    current_user: CurrentUser,
     db: AsyncSession = Depends(get_session),
 ) -> AssetCycleDetailResponse:
     """
@@ -322,6 +329,7 @@ verification_router = APIRouter(
 async def override_verification_endpoint(
     verification_id: int,
     payload: OverrideCreate,
+    current_user: AuditorOrAdmin,  # Only auditors and admins can override
     db: AsyncSession = Depends(get_session),
 ) -> VerificationResponse:
     """
@@ -363,6 +371,7 @@ async def override_verification_endpoint(
     summary="List assets without verification in cycle",
 )
 async def get_pending_assets_endpoint(
+    current_user: CurrentUser,
     cycle_id: int = Query(..., description="Verification cycle ID"),
     db: AsyncSession = Depends(get_session),
 ) -> PendingAssetsResponse:

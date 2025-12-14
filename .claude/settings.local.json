@@ -5,7 +5,14 @@
       "Bash(poetry run pytest:*)",
       "Bash(dir /s c:UsersAdminDocumentsgithubfixed-asset-apiapi)",
       "Bash(dir /b \"c:\\Users\\Admin\\Documents\\github\\fixed-asset-api\\alembic\\versions\")",
-      "Bash(poetry add:*)"
+      "Bash(poetry add:*)",
+      "Bash(dir /s \"c:\\Users\\Admin\\Documents\\github\\fixed-asset-api\")",
+      "Bash(move \"c:\\Users\\Admin\\Documents\\github\\fixed-asset-api\\README.md\" \"c:\\Users\\Admin\\Documents\\github\\fixed-asset-api\\documentation\"\" && move \"c:UsersAdminDocumentsgithubfixed-asset-apiv2_report.md\" \"c:UsersAdminDocumentsgithubfixed-asset-apidocumentation\"\")",
+      "Bash(move:*)",
+      "Bash(cmd /c \"move c:\\Users\\Admin\\Documents\\github\\fixed-asset-api\\README.md c:\\Users\\Admin\\Documents\\github\\fixed-asset-api\\documentation\"\")",
+      "Bash(cmd /c \"move c:\\Users\\Admin\\Documents\\github\\fixed-asset-api\\v2_report.md c:\\Users\\Admin\\Documents\\github\\fixed-asset-api\\documentation\"\")",
+      "Bash(cmd /c:*)",
+      "Bash(powershell:*)"
     ]
   }
 }
