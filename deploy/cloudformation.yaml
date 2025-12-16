@@ -5,7 +5,7 @@ Description: 'Fixed Asset Verification API - One-Click Deployment'
 # USAGE:
 # 1. Go to AWS CloudFormation Console
 # 2. Create Stack -> Upload this template
-# 3. Enter parameters -> Create
+# 3. Enter parameters (KeyPair, Port, etc.) -> Create
 # 4. Wait ~5 minutes -> API is live!
 #
 # Or use CLI:
@@ -13,7 +13,7 @@ Description: 'Fixed Asset Verification API - One-Click Deployment'
 #     --stack-name fixed-asset-api \
 #     --template-body file://cloudformation.yaml \
 #     --parameters ParameterKey=KeyName,ParameterValue=your-key-pair \
-#     --capabilities CAPABILITY_IAM
+#                  ParameterKey=APIPort,ParameterValue=8200
 # =============================================================================
 
 Parameters:
@@ -32,10 +32,22 @@ Parameters:
       - t3.small
       - t3.medium
 
+  APIPort:
+    Description: Port for the API (default 8000, use 8200 if 8000 is taken)
+    Type: Number
+    Default: 8200
+    MinValue: 1024
+    MaxValue: 65535
+
   AllowedIP:
     Description: IP range for SSH access (use 0.0.0.0/0 for anywhere)
     Type: String
     Default: 0.0.0.0/0
+
+  GitBranch:
+    Description: Git branch to deploy
+    Type: String
+    Default: v2
 
 Mappings:
   RegionAMI:
@@ -81,8 +93,8 @@ Resources:
           CidrIp: 0.0.0.0/0
           Description: HTTPS
         - IpProtocol: tcp
-          FromPort: 8000
-          ToPort: 8000
+          FromPort: !Ref APIPort
+          ToPort: !Ref APIPort
           CidrIp: 0.0.0.0/0
           Description: API port
       Tags:
@@ -108,6 +120,8 @@ Resources:
           exec > >(tee /var/log/user-data.log) 2>&1
 
           echo "=== Starting Fixed Asset API Deployment ==="
+          echo "API Port: ${APIPort}"
+          echo "Git Branch: ${GitBranch}"
 
           # Update system
           apt-get update -qq
@@ -126,14 +140,14 @@ Resources:
 
           # Clone repository
           cd /opt
-          git clone -b v2 https://github.com/kredoworks/fixed-asset-api.git
+          git clone -b ${GitBranch} https://github.com/kredoworks/fixed-asset-api.git
           cd fixed-asset-api
 
           # Generate secure credentials
           POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
           SECRET_KEY=$(openssl rand -base64 64 | tr -dc 'a-zA-Z0-9' | head -c 64)
 
-          # Create environment file
+          # Create environment file with custom port
           cat > .env << EOF
           POSTGRES_USER=postgres
           POSTGRES_PASSWORD=$POSTGRES_PASSWORD
@@ -142,8 +156,12 @@ Resources:
           CORS_ORIGINS=["*"]
           ACCESS_TOKEN_EXPIRE_MINUTES=1440
           REFRESH_TOKEN_EXPIRE_DAYS=7
+          API_PORT=${APIPort}
           EOF
           chmod 600 .env
+
+          # Update docker-compose to use custom port
+          sed -i 's/8000:8000/${APIPort}:8000/g' docker-compose.yml
 
           # Start containers
           docker-compose pull
@@ -154,7 +172,9 @@ Resources:
           docker-compose up -d api
 
           echo "=== Deployment Complete ==="
-          echo "API URL: http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):8000"
+          PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+          echo "API URL: http://$PUBLIC_IP:${APIPort}"
+          echo "API Docs: http://$PUBLIC_IP:${APIPort}/docs"
 
   # Elastic IP (optional, for stable IP)
   APIElasticIP:
@@ -168,16 +188,24 @@ Resources:
 Outputs:
   APIURL:
     Description: API URL
-    Value: !Sub 'http://${APIElasticIP}:8000'
+    Value: !Sub 'http://${APIElasticIP}:${APIPort}'
 
   APIDocs:
     Description: API Documentation (Swagger)
-    Value: !Sub 'http://${APIElasticIP}:8000/docs'
+    Value: !Sub 'http://${APIElasticIP}:${APIPort}/docs'
+
+  HealthCheck:
+    Description: Health check endpoint
+    Value: !Sub 'http://${APIElasticIP}:${APIPort}/health'
 
   SSHCommand:
     Description: SSH command to connect
     Value: !Sub 'ssh -i ${KeyName}.pem ubuntu@${APIElasticIP}'
 
-  TestLogin:
-    Description: Test credentials
+  TestCredentials:
+    Description: Test login credentials
     Value: 'admin@company.com / admin123'
+
+  Port:
+    Description: API Port
+    Value: !Ref APIPort
