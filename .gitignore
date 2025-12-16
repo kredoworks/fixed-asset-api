@@ -63,4 +63,12 @@ alembic/versions/__pycache__/
 
 # Logs
 *.log
-*.json
+
+# Uploads
+uploads/
+
+# Windows reserved files
+nul
+
+# Virtual env
+.venv/

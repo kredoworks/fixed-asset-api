@@ -201,11 +201,11 @@ def seed_database():
             hashed_pw = get_password_hash(user["password"])
             cur.execute(
                 """
-                INSERT INTO users (email, hashed_password, full_name, role, is_active)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO users (email, hashed_password, full_name, role, is_active, must_change_password)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (user["email"], hashed_pw, user["full_name"], user["role"], user["is_active"])
+                (user["email"], hashed_pw, user["full_name"], user["role"], user["is_active"], False)
             )
             user_id = cur.fetchone()[0]
             user_ids[user["email"]] = user_id
