@@ -33,9 +33,9 @@ Parameters:
       - t3.medium
 
   APIPort:
-    Description: Port for the API (default 8000, use 8200 if 8000 is taken)
+    Description: Port for the API
     Type: Number
-    Default: 8200
+    Default: 7400
     MinValue: 1024
     MaxValue: 65535
 
