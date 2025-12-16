@@ -109,9 +109,10 @@ Resources:
 
           # Verify Dockerfile has correct poetry command
           echo "Checking Dockerfile..."
-          grep -q "only main" Dockerfile && echo "Dockerfile OK" || {
+          grep -q "without dev" Dockerfile && echo "Dockerfile OK" || {
             echo "Fixing Dockerfile..."
-            sed -i 's/--no-dev/--only main/g' Dockerfile
+            sed -i 's/--no-dev/--without dev/g' Dockerfile
+            sed -i 's/--only main/--without dev/g' Dockerfile
           }
 
           # Generate secure passwords
