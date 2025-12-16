@@ -1,0 +1,44 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv
+env
+.eggs
+*.egg-info
+.pytest_cache
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Docs
+documentation/
+*.md
+
+# Tests
+tests/
+htmlcov/
+.coverage
+
+# Uploads (mounted as volume)
+uploads/
+
+# Other
+.DS_Store
+nul
+*.log
