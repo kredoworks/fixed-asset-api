@@ -1,19 +1,16 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Fixed Asset Verification API - One-Click Deployment'
+Description: 'Fixed Asset Verification API - One-Click Deployment (Pre-built Image)'
 
 # =============================================================================
-# USAGE:
+# ONE-CLICK DEPLOYMENT
+#
+# Uses pre-built Docker image from GitHub Container Registry
+# No build step = faster & more reliable deployment
+#
 # 1. Go to AWS CloudFormation Console
 # 2. Create Stack -> Upload this template
-# 3. Enter parameters (KeyPair, Port, etc.) -> Create
-# 4. Wait ~5 minutes -> API is live!
-#
-# Or use CLI:
-#   aws cloudformation create-stack \
-#     --stack-name fixed-asset-api \
-#     --template-body file://cloudformation.yaml \
-#     --parameters ParameterKey=KeyName,ParameterValue=your-key-pair \
-#                  ParameterKey=APIPort,ParameterValue=8200
+# 3. Fill parameters -> Create
+# 4. Wait ~3 minutes -> Done!
 # =============================================================================
 
 Parameters:
@@ -40,19 +37,14 @@ Parameters:
     MaxValue: 65535
 
   AllowedIP:
-    Description: IP range for SSH access (use 0.0.0.0/0 for anywhere)
+    Description: IP range for SSH access (0.0.0.0/0 for anywhere)
     Type: String
     Default: 0.0.0.0/0
-
-  GitBranch:
-    Description: Git branch to deploy
-    Type: String
-    Default: v2
 
 Mappings:
   RegionAMI:
     us-east-1:
-      AMI: ami-0c7217cdde317cfec  # Ubuntu 22.04 LTS
+      AMI: ami-0c7217cdde317cfec
     us-east-2:
       AMI: ami-05fb0b8c1424f266b
     us-west-1:
@@ -71,37 +63,23 @@ Mappings:
       AMI: ami-07c589821f2b353aa
 
 Resources:
-  # Security Group
   APISecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Security group for Fixed Asset API
+      GroupDescription: Fixed Asset API Security Group
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
           CidrIp: !Ref AllowedIP
-          Description: SSH access
-        - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-          Description: HTTP
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: 0.0.0.0/0
-          Description: HTTPS
         - IpProtocol: tcp
           FromPort: !Ref APIPort
           ToPort: !Ref APIPort
           CidrIp: 0.0.0.0/0
-          Description: API port
       Tags:
         - Key: Name
           Value: fixed-asset-api-sg
 
-  # EC2 Instance
   APIInstance:
     Type: AWS::EC2::Instance
     Properties:
@@ -116,67 +94,90 @@ Resources:
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash
-          set -e
           exec > >(tee /var/log/user-data.log) 2>&1
+          set -ex
 
-          echo "=== Starting Fixed Asset API Deployment ==="
-          echo "API Port: ${APIPort}"
-          echo "Git Branch: ${GitBranch}"
-
-          # Update system
-          apt-get update -qq
-          apt-get upgrade -y -qq
+          echo "=== Fixed Asset API Deployment ==="
+          echo "Port: ${APIPort}"
 
           # Install Docker
-          curl -fsSL https://get.docker.com -o get-docker.sh
-          sh get-docker.sh
-          usermod -aG docker ubuntu
+          apt-get update -qq
+          apt-get install -y docker.io docker-compose
           systemctl enable docker
           systemctl start docker
 
-          # Install Docker Compose
-          curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-          chmod +x /usr/local/bin/docker-compose
+          # Generate credentials
+          DB_PASS=$(openssl rand -hex 16)
+          SECRET=$(openssl rand -hex 32)
 
-          # Clone repository
-          cd /opt
-          git clone -b ${GitBranch} https://github.com/kredoworks/fixed-asset-api.git
-          cd fixed-asset-api
+          # Create app directory
+          mkdir -p /opt/api
+          cd /opt/api
 
-          # Generate secure credentials
-          POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
-          SECRET_KEY=$(openssl rand -base64 64 | tr -dc 'a-zA-Z0-9' | head -c 64)
+          # Create docker-compose.yml directly (no git clone needed)
+          cat > docker-compose.yml << 'COMPOSE'
+          version: '3.8'
+          services:
+            db:
+              image: postgres:15-alpine
+              restart: unless-stopped
+              environment:
+                POSTGRES_USER: postgres
+                POSTGRES_PASSWORD: ${DB_PASSWORD}
+                POSTGRES_DB: fixed_asset_db
+              volumes:
+                - pgdata:/var/lib/postgresql/data
+              healthcheck:
+                test: ["CMD-SHELL", "pg_isready -U postgres"]
+                interval: 5s
+                timeout: 5s
+                retries: 10
 
-          # Create environment file with custom port
+            api:
+              image: ghcr.io/kredoworks/fixed-asset-api:v2
+              restart: unless-stopped
+              depends_on:
+                db:
+                  condition: service_healthy
+              environment:
+                DATABASE_URL: postgresql+asyncpg://postgres:${DB_PASSWORD}@db:5432/fixed_asset_db
+                SECRET_KEY: ${SECRET_KEY}
+                CORS_ORIGINS: '["*"]'
+              ports:
+                - "${API_PORT}:8000"
+
+            init:
+              image: ghcr.io/kredoworks/fixed-asset-api:v2
+              depends_on:
+                db:
+                  condition: service_healthy
+              environment:
+                DATABASE_URL: postgresql+asyncpg://postgres:${DB_PASSWORD}@db:5432/fixed_asset_db
+                SECRET_KEY: ${SECRET_KEY}
+              command: python reset_db.py --seed
+              restart: "no"
+
+          volumes:
+            pgdata:
+          COMPOSE
+
+          # Create .env file
           cat > .env << EOF
-          POSTGRES_USER=postgres
-          POSTGRES_PASSWORD=$POSTGRES_PASSWORD
-          POSTGRES_DB=fixed_asset_db
-          SECRET_KEY=$SECRET_KEY
-          CORS_ORIGINS=["*"]
-          ACCESS_TOKEN_EXPIRE_MINUTES=1440
-          REFRESH_TOKEN_EXPIRE_DAYS=7
+          DB_PASSWORD=$DB_PASS
+          SECRET_KEY=$SECRET
           API_PORT=${APIPort}
           EOF
-          chmod 600 .env
 
-          # Update docker-compose to use custom port
-          sed -i 's/8000:8000/${APIPort}:8000/g' docker-compose.yml
-
-          # Start containers
+          # Pull and start
           docker-compose pull
-          docker-compose build --no-cache
           docker-compose up -d db
-          sleep 15
-          docker-compose run --rm db-init
+          sleep 10
+          docker-compose run --rm init
           docker-compose up -d api
 
           echo "=== Deployment Complete ==="
-          PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
-          echo "API URL: http://$PUBLIC_IP:${APIPort}"
-          echo "API Docs: http://$PUBLIC_IP:${APIPort}/docs"
+          echo "URL: http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):${APIPort}"
 
-  # Elastic IP (optional, for stable IP)
   APIElasticIP:
     Type: AWS::EC2::EIP
     Properties:
@@ -191,21 +192,13 @@ Outputs:
     Value: !Sub 'http://${APIElasticIP}:${APIPort}'
 
   APIDocs:
-    Description: API Documentation (Swagger)
+    Description: Swagger Documentation
     Value: !Sub 'http://${APIElasticIP}:${APIPort}/docs'
 
-  HealthCheck:
-    Description: Health check endpoint
-    Value: !Sub 'http://${APIElasticIP}:${APIPort}/health'
-
   SSHCommand:
-    Description: SSH command to connect
+    Description: SSH Access
     Value: !Sub 'ssh -i ${KeyName}.pem ubuntu@${APIElasticIP}'
 
-  TestCredentials:
-    Description: Test login credentials
+  Credentials:
+    Description: Test Login
     Value: 'admin@company.com / admin123'
-
-  Port:
-    Description: API Port
-    Value: !Ref APIPort
