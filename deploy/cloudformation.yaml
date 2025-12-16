@@ -1,17 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Fixed Asset Verification API - One-Click Deployment (Pre-built Image)'
-
-# =============================================================================
-# ONE-CLICK DEPLOYMENT
-#
-# Uses pre-built Docker image from GitHub Container Registry
-# No build step = faster & more reliable deployment
-#
-# 1. Go to AWS CloudFormation Console
-# 2. Create Stack -> Upload this template
-# 3. Fill parameters -> Create
-# 4. Wait ~3 minutes -> Done!
-# =============================================================================
+Description: 'Fixed Asset Verification API - One-Click Deployment'
 
 Parameters:
   KeyName:
@@ -97,86 +85,83 @@ Resources:
           exec > >(tee /var/log/user-data.log) 2>&1
           set -ex
 
-          echo "=== Fixed Asset API Deployment ==="
-          echo "Port: ${APIPort}"
+          export DEBIAN_FRONTEND=noninteractive
+          export API_PORT="${APIPort}"
 
-          # Install Docker
+          echo "=========================================="
+          echo "Fixed Asset API - Deployment Starting"
+          echo "Port: $API_PORT"
+          echo "=========================================="
+
+          # Update and install Docker
           apt-get update -qq
-          apt-get install -y docker.io docker-compose
+          apt-get install -y -qq docker.io docker-compose git
           systemctl enable docker
           systemctl start docker
 
-          # Generate credentials
+          # Wait for docker
+          sleep 5
+
+          # Clone repo
+          cd /opt
+          git clone --depth 1 -b v2 https://github.com/kredoworks/fixed-asset-api.git app
+          cd app
+
+          # Verify Dockerfile has correct poetry command
+          echo "Checking Dockerfile..."
+          grep -q "only main" Dockerfile && echo "Dockerfile OK" || {
+            echo "Fixing Dockerfile..."
+            sed -i 's/--no-dev/--only main/g' Dockerfile
+          }
+
+          # Generate secure passwords
           DB_PASS=$(openssl rand -hex 16)
-          SECRET=$(openssl rand -hex 32)
+          SECRET_KEY=$(openssl rand -hex 32)
 
-          # Create app directory
-          mkdir -p /opt/api
-          cd /opt/api
+          # Create .env
+          cat > .env << ENVFILE
+          POSTGRES_USER=postgres
+          POSTGRES_PASSWORD=$DB_PASS
+          POSTGRES_DB=fixed_asset_db
+          DATABASE_URL=postgresql+asyncpg://postgres:$DB_PASS@db:5432/fixed_asset_db
+          SECRET_KEY=$SECRET_KEY
+          CORS_ORIGINS=["*"]
+          ACCESS_TOKEN_EXPIRE_MINUTES=1440
+          REFRESH_TOKEN_EXPIRE_DAYS=7
+          ENVFILE
 
-          # Create docker-compose.yml directly (no git clone needed)
-          cat > docker-compose.yml << 'COMPOSE'
-          version: '3.8'
-          services:
-            db:
-              image: postgres:15-alpine
-              restart: unless-stopped
-              environment:
-                POSTGRES_USER: postgres
-                POSTGRES_PASSWORD: ${DB_PASSWORD}
-                POSTGRES_DB: fixed_asset_db
-              volumes:
-                - pgdata:/var/lib/postgresql/data
-              healthcheck:
-                test: ["CMD-SHELL", "pg_isready -U postgres"]
-                interval: 5s
-                timeout: 5s
-                retries: 10
+          # Update docker-compose port
+          sed -i "s/8000:8000/$API_PORT:8000/g" docker-compose.yml
 
-            api:
-              image: ghcr.io/kredoworks/fixed-asset-api:v2
-              restart: unless-stopped
-              depends_on:
-                db:
-                  condition: service_healthy
-              environment:
-                DATABASE_URL: postgresql+asyncpg://postgres:${DB_PASSWORD}@db:5432/fixed_asset_db
-                SECRET_KEY: ${SECRET_KEY}
-                CORS_ORIGINS: '["*"]'
-              ports:
-                - "${API_PORT}:8000"
+          # Build and deploy
+          echo "Building containers..."
+          docker-compose build --no-cache
 
-            init:
-              image: ghcr.io/kredoworks/fixed-asset-api:v2
-              depends_on:
-                db:
-                  condition: service_healthy
-              environment:
-                DATABASE_URL: postgresql+asyncpg://postgres:${DB_PASSWORD}@db:5432/fixed_asset_db
-                SECRET_KEY: ${SECRET_KEY}
-              command: python reset_db.py --seed
-              restart: "no"
-
-          volumes:
-            pgdata:
-          COMPOSE
-
-          # Create .env file
-          cat > .env << EOF
-          DB_PASSWORD=$DB_PASS
-          SECRET_KEY=$SECRET
-          API_PORT=${APIPort}
-          EOF
-
-          # Pull and start
-          docker-compose pull
+          echo "Starting database..."
           docker-compose up -d db
-          sleep 10
-          docker-compose run --rm init
+
+          echo "Waiting for database..."
+          sleep 15
+
+          echo "Initializing database..."
+          docker-compose run --rm db-init || echo "Init completed"
+
+          echo "Starting API..."
           docker-compose up -d api
 
-          echo "=== Deployment Complete ==="
-          echo "URL: http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):${APIPort}"
+          # Wait and verify
+          sleep 10
+
+          PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+
+          echo "=========================================="
+          echo "Deployment Complete!"
+          echo "API: http://$PUBLIC_IP:$API_PORT"
+          echo "Docs: http://$PUBLIC_IP:$API_PORT/docs"
+          echo "=========================================="
+
+          # Test
+          curl -s http://localhost:$API_PORT/health || echo "Health check pending..."
 
   APIElasticIP:
     Type: AWS::EC2::EIP
