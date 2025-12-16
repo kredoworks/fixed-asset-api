@@ -1,0 +1,60 @@
+# GitHub Actions - Auto Deploy to EC2 on Push
+#
+# Setup required:
+# 1. Add these secrets in GitHub repo Settings → Secrets:
+#    - EC2_HOST: Your EC2 public IP or domain
+#    - EC2_USER: ubuntu (default for Ubuntu AMI)
+#    - EC2_SSH_KEY: Your EC2 private key (contents of .pem file)
+#
+# 2. First-time: Run CloudFormation or ec2-deploy.sh to create server
+# 3. After that: Every push to v2 branch auto-deploys!
+
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - v2
+      - main
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            echo "=== Deploying Fixed Asset API ==="
+            cd /opt/fixed-asset-api
+
+            # Pull latest code
+            git fetch origin
+            git reset --hard origin/v2
+
+            # Rebuild and restart containers
+            docker-compose build --no-cache api
+            docker-compose up -d api
+
+            # Health check
+            sleep 5
+            curl -f http://localhost:8000/health || echo "Health check failed"
+
+            echo "=== Deployment Complete ==="
+
+      - name: Notify Success
+        if: success()
+        run: echo "✅ Deployed successfully to ${{ secrets.EC2_HOST }}"
+
+      - name: Notify Failure
+        if: failure()
+        run: echo "❌ Deployment failed!"
