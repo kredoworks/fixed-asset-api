@@ -1,0 +1,183 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Fixed Asset Verification API - One-Click Deployment'
+
+# =============================================================================
+# USAGE:
+# 1. Go to AWS CloudFormation Console
+# 2. Create Stack -> Upload this template
+# 3. Enter parameters -> Create
+# 4. Wait ~5 minutes -> API is live!
+#
+# Or use CLI:
+#   aws cloudformation create-stack \
+#     --stack-name fixed-asset-api \
+#     --template-body file://cloudformation.yaml \
+#     --parameters ParameterKey=KeyName,ParameterValue=your-key-pair \
+#     --capabilities CAPABILITY_IAM
+# =============================================================================
+
+Parameters:
+  KeyName:
+    Description: EC2 Key Pair for SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: t3.small
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t3.micro
+      - t3.small
+      - t3.medium
+
+  AllowedIP:
+    Description: IP range for SSH access (use 0.0.0.0/0 for anywhere)
+    Type: String
+    Default: 0.0.0.0/0
+
+Mappings:
+  RegionAMI:
+    us-east-1:
+      AMI: ami-0c7217cdde317cfec  # Ubuntu 22.04 LTS
+    us-east-2:
+      AMI: ami-05fb0b8c1424f266b
+    us-west-1:
+      AMI: ami-0ce2cb35386fc22e9
+    us-west-2:
+      AMI: ami-008fe2fc65df48dac
+    eu-west-1:
+      AMI: ami-0905a3c97561e0b69
+    eu-central-1:
+      AMI: ami-0faab6bdbac9486fb
+    ap-south-1:
+      AMI: ami-03f4878755434977f
+    ap-southeast-1:
+      AMI: ami-078c1149d8ad719a7
+    ap-northeast-1:
+      AMI: ami-07c589821f2b353aa
+
+Resources:
+  # Security Group
+  APISecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Fixed Asset API
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref AllowedIP
+          Description: SSH access
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: 0.0.0.0/0
+          Description: API port
+      Tags:
+        - Key: Name
+          Value: fixed-asset-api-sg
+
+  # EC2 Instance
+  APIInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !FindInMap [RegionAMI, !Ref 'AWS::Region', AMI]
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SecurityGroups:
+        - !Ref APISecurityGroup
+      Tags:
+        - Key: Name
+          Value: fixed-asset-api
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -e
+          exec > >(tee /var/log/user-data.log) 2>&1
+
+          echo "=== Starting Fixed Asset API Deployment ==="
+
+          # Update system
+          apt-get update -qq
+          apt-get upgrade -y -qq
+
+          # Install Docker
+          curl -fsSL https://get.docker.com -o get-docker.sh
+          sh get-docker.sh
+          usermod -aG docker ubuntu
+          systemctl enable docker
+          systemctl start docker
+
+          # Install Docker Compose
+          curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          chmod +x /usr/local/bin/docker-compose
+
+          # Clone repository
+          cd /opt
+          git clone -b v2 https://github.com/kredoworks/fixed-asset-api.git
+          cd fixed-asset-api
+
+          # Generate secure credentials
+          POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
+          SECRET_KEY=$(openssl rand -base64 64 | tr -dc 'a-zA-Z0-9' | head -c 64)
+
+          # Create environment file
+          cat > .env << EOF
+          POSTGRES_USER=postgres
+          POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+          POSTGRES_DB=fixed_asset_db
+          SECRET_KEY=$SECRET_KEY
+          CORS_ORIGINS=["*"]
+          ACCESS_TOKEN_EXPIRE_MINUTES=1440
+          REFRESH_TOKEN_EXPIRE_DAYS=7
+          EOF
+          chmod 600 .env
+
+          # Start containers
+          docker-compose pull
+          docker-compose build --no-cache
+          docker-compose up -d db
+          sleep 15
+          docker-compose run --rm db-init
+          docker-compose up -d api
+
+          echo "=== Deployment Complete ==="
+          echo "API URL: http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):8000"
+
+  # Elastic IP (optional, for stable IP)
+  APIElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      InstanceId: !Ref APIInstance
+      Tags:
+        - Key: Name
+          Value: fixed-asset-api-eip
+
+Outputs:
+  APIURL:
+    Description: API URL
+    Value: !Sub 'http://${APIElasticIP}:8000'
+
+  APIDocs:
+    Description: API Documentation (Swagger)
+    Value: !Sub 'http://${APIElasticIP}:8000/docs'
+
+  SSHCommand:
+    Description: SSH command to connect
+    Value: !Sub 'ssh -i ${KeyName}.pem ubuntu@${APIElasticIP}'
+
+  TestLogin:
+    Description: Test credentials
+    Value: 'admin@company.com / admin123'
