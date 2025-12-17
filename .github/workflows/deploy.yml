@@ -1,0 +1,261 @@
+# GitHub Actions - Build, Push to ECR, Deploy to EC2
+#
+# Flow: Build Docker → Push to ECR → Deploy via SSM to EC2
+#
+# Required GitHub Secrets:
+#   AWS_REGION        - e.g., ap-south-1
+#   AWS_ROLE_ARN      - OIDC role ARN
+#   ECR_REGISTRY      - e.g., 123456789.dkr.ecr.ap-south-1.amazonaws.com
+#   ECR_REPOSITORY    - e.g., fixed-asset-api
+#   POSTGRES_PASSWORD - Database password
+#   SECRET_KEY        - JWT secret key
+
+name: Deploy to AWS
+
+on:
+  push:
+    branches:
+      - v2
+      - main
+  workflow_dispatch:
+    inputs:
+      force_new_ec2:
+        description: 'Force create new EC2 instance'
+        required: false
+        default: 'false'
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+
+permissions:
+  id-token: write   # Required for OIDC
+  contents: read
+
+jobs:
+  build-and-push:
+    name: Build & Push to ECR
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Output image info
+        run: |
+          echo "Image pushed to ECR:"
+          echo "${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ steps.meta.outputs.version }}"
+
+  deploy:
+    name: Deploy to EC2
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check for existing EC2 instance
+        id: check-ec2
+        run: |
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Project,Values=fixed-asset-api" \
+                      "Name=instance-state-name,Values=running,pending" \
+            --query 'Reservations[0].Instances[0].InstanceId' \
+            --output text)
+
+          if [ "$INSTANCE_ID" = "None" ] || [ -z "$INSTANCE_ID" ]; then
+            echo "instance_exists=false" >> $GITHUB_OUTPUT
+            echo "No running instance found"
+          else
+            echo "instance_exists=true" >> $GITHUB_OUTPUT
+            echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+            echo "Found instance: $INSTANCE_ID"
+          fi
+
+      - name: Create EC2 instance from Launch Template
+        id: create-ec2
+        if: steps.check-ec2.outputs.instance_exists == 'false' || github.event.inputs.force_new_ec2 == 'true'
+        run: |
+          echo "Creating new EC2 instance..."
+
+          INSTANCE_ID=$(aws ec2 run-instances \
+            --launch-template LaunchTemplateName=fixed-asset-api-template \
+            --query 'Instances[0].InstanceId' \
+            --output text)
+
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+          echo "Created instance: $INSTANCE_ID"
+
+          # Wait for instance to be running
+          echo "Waiting for instance to start..."
+          aws ec2 wait instance-running --instance-ids $INSTANCE_ID
+
+          # Wait for SSM agent to be ready
+          echo "Waiting for SSM agent..."
+          sleep 60
+
+      - name: Get EC2 Instance ID
+        id: get-instance
+        run: |
+          if [ -n "${{ steps.create-ec2.outputs.instance_id }}" ]; then
+            echo "instance_id=${{ steps.create-ec2.outputs.instance_id }}" >> $GITHUB_OUTPUT
+          else
+            echo "instance_id=${{ steps.check-ec2.outputs.instance_id }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create deployment files on EC2
+        run: |
+          INSTANCE_ID="${{ steps.get-instance.outputs.instance_id }}"
+          IMAGE_TAG="${{ needs.build-and-push.outputs.image_tag }}"
+
+          echo "Deploying to instance: $INSTANCE_ID"
+          echo "Image tag: $IMAGE_TAG"
+
+          # Create docker-compose and .env on EC2
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters "commands=[
+              'cd /opt/app',
+              'cat > docker-compose.prod.yml << EOF
+          version: \"3.8\"
+          services:
+            db:
+              image: postgres:15-alpine
+              container_name: fixed_asset_db
+              restart: unless-stopped
+              environment:
+                POSTGRES_USER: postgres
+                POSTGRES_PASSWORD: \${POSTGRES_PASSWORD}
+                POSTGRES_DB: fixed_asset_db
+              volumes:
+                - postgres_data:/var/lib/postgresql/data
+              healthcheck:
+                test: [\"CMD-SHELL\", \"pg_isready -U postgres\"]
+                interval: 10s
+                timeout: 5s
+                retries: 5
+              networks:
+                - app_network
+
+            api:
+              image: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${IMAGE_TAG:-latest}
+              container_name: fixed_asset_api
+              restart: unless-stopped
+              depends_on:
+                db:
+                  condition: service_healthy
+              environment:
+                DATABASE_URL: postgresql+asyncpg://postgres:\${POSTGRES_PASSWORD}@db:5432/fixed_asset_db
+                SECRET_KEY: \${SECRET_KEY}
+                CORS_ORIGINS: [\"*\"]
+              ports:
+                - \"7400:8000\"
+              networks:
+                - app_network
+
+          volumes:
+            postgres_data:
+              name: fixed_asset_postgres_data
+
+          networks:
+            app_network:
+              name: fixed_asset_network
+          EOF',
+              'cat > .env << EOF
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          SECRET_KEY=${{ secrets.SECRET_KEY }}
+          EOF',
+              'chmod 600 .env'
+            ]" \
+            --query 'Command.CommandId' \
+            --output text)
+
+          # Wait for command
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" || true
+
+      - name: Deploy application
+        run: |
+          INSTANCE_ID="${{ steps.get-instance.outputs.instance_id }}"
+
+          # Login to ECR and deploy
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters "commands=[
+              'cd /opt/app',
+              'aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}',
+              'docker compose -f docker-compose.prod.yml pull',
+              'docker compose -f docker-compose.prod.yml up -d',
+              'docker image prune -f',
+              'sleep 10',
+              'curl -f http://localhost:7400/health || echo \"Health check pending...\"'
+            ]" \
+            --query 'Command.CommandId' \
+            --output text)
+
+          echo "Deployment command: $COMMAND_ID"
+
+          # Wait and get result
+          sleep 30
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --query '[Status, StatusDetails, StandardOutputContent]' \
+            --output text || echo "Command still running..."
+
+      - name: Get deployment URL
+        run: |
+          INSTANCE_ID="${{ steps.get-instance.outputs.instance_id }}"
+
+          PUBLIC_IP=$(aws ec2 describe-instances \
+            --instance-ids "$INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text)
+
+          echo "=========================================="
+          echo "Deployment Complete!"
+          echo "=========================================="
+          echo "API URL: http://${PUBLIC_IP}:7400"
+          echo "Docs: http://${PUBLIC_IP}:7400/docs"
+          echo "Health: http://${PUBLIC_IP}:7400/health"
+          echo "=========================================="

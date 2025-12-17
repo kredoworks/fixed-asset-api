@@ -1,10 +1,9 @@
 # Dockerfile for Fixed Asset Verification API
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV POETRY_VERSION=1.7.1
 ENV POETRY_HOME="/opt/poetry"
 ENV POETRY_VIRTUALENVS_CREATE=false
 ENV PATH="$POETRY_HOME/bin:$PATH"
@@ -16,7 +15,7 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Poetry
+# Install Poetry (latest stable)
 RUN curl -sSL https://install.python-poetry.org | python3 -
 
 # Set work directory
@@ -25,7 +24,7 @@ WORKDIR /app
 # Copy dependency files
 COPY pyproject.toml poetry.lock* ./
 
-# Install dependencies (exclude dev group)
+# Install dependencies (production only)
 RUN poetry install --without dev --no-interaction --no-ansi
 
 # Copy application code

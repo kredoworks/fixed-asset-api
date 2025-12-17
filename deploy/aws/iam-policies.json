@@ -1,0 +1,116 @@
+{
+  "_comment": "IAM Policies for Fixed Asset API CI/CD",
+  "_instructions": "Create these via AWS Console or CLI. See DEPLOYMENT.md for step-by-step.",
+
+  "github_oidc_trust_policy": {
+    "_description": "Trust policy for GitHub OIDC - attach to IAM Role",
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "Federated": "arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
+        },
+        "Action": "sts:AssumeRoleWithWebIdentity",
+        "Condition": {
+          "StringEquals": {
+            "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+          },
+          "StringLike": {
+            "token.actions.githubusercontent.com:sub": "repo:kredoworks/fixed-asset-api:*"
+          }
+        }
+      }
+    ]
+  },
+
+  "github_actions_policy": {
+    "_description": "Permissions for GitHub Actions to deploy - attach to github-actions-role",
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ECRAuth",
+        "Effect": "Allow",
+        "Action": "ecr:GetAuthorizationToken",
+        "Resource": "*"
+      },
+      {
+        "Sid": "ECRPush",
+        "Effect": "Allow",
+        "Action": [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+          "ecr:PutImage",
+          "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload"
+        ],
+        "Resource": "arn:aws:ecr:*:ACCOUNT_ID:repository/fixed-asset-api"
+      },
+      {
+        "Sid": "EC2Describe",
+        "Effect": "Allow",
+        "Action": [
+          "ec2:DescribeInstances",
+          "ec2:DescribeLaunchTemplates",
+          "ec2:DescribeLaunchTemplateVersions"
+        ],
+        "Resource": "*"
+      },
+      {
+        "Sid": "EC2Launch",
+        "Effect": "Allow",
+        "Action": [
+          "ec2:RunInstances",
+          "ec2:CreateTags"
+        ],
+        "Resource": "*",
+        "Condition": {
+          "StringEquals": {
+            "aws:RequestTag/Project": "fixed-asset-api"
+          }
+        }
+      },
+      {
+        "Sid": "SSMConnect",
+        "Effect": "Allow",
+        "Action": [
+          "ssm:SendCommand",
+          "ssm:GetCommandInvocation"
+        ],
+        "Resource": "*"
+      }
+    ]
+  },
+
+  "ec2_instance_policy": {
+    "_description": "Permissions for EC2 instance to pull from ECR - attach to ec2-instance-role",
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ECRPull",
+        "Effect": "Allow",
+        "Action": [
+          "ecr:GetAuthorizationToken",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage"
+        ],
+        "Resource": "*"
+      },
+      {
+        "Sid": "SSMAgent",
+        "Effect": "Allow",
+        "Action": [
+          "ssm:UpdateInstanceInformation",
+          "ssmmessages:CreateControlChannel",
+          "ssmmessages:CreateDataChannel",
+          "ssmmessages:OpenControlChannel",
+          "ssmmessages:OpenDataChannel"
+        ],
+        "Resource": "*"
+      }
+    ]
+  }
+}

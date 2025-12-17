@@ -1,0 +1,65 @@
+# docker-compose.prod.yml
+# Production Docker Compose for EC2 deployment
+#
+# CRITICAL: This file uses named volumes to persist PostgreSQL data.
+# NEVER use: docker-compose down -v (this DELETES ALL DATA)
+# SAFE commands:
+#   - docker-compose -f docker-compose.prod.yml pull
+#   - docker-compose -f docker-compose.prod.yml up -d
+#   - docker-compose -f docker-compose.prod.yml down (without -v)
+
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: fixed_asset_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-fixed_asset_db}
+    volumes:
+      # Named volume for data persistence - SURVIVES container recreation
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # DB not exposed externally for security
+    networks:
+      - app_network
+
+  api:
+    image: ${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG:-latest}
+    container_name: fixed_asset_api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-fixed_asset_db}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      CORS_ORIGINS: ${CORS_ORIGINS:-["*"]}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
+      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+    ports:
+      - "${API_PORT:-7400}:8000"
+    volumes:
+      - uploads_data:/app/uploads
+    networks:
+      - app_network
+
+# Named volumes - persist across deployments
+# WARNING: docker-compose down -v will DELETE these volumes and ALL DATA
+volumes:
+  postgres_data:
+    name: fixed_asset_postgres_data
+  uploads_data:
+    name: fixed_asset_uploads
+
+networks:
+  app_network:
+    name: fixed_asset_network
+    driver: bridge
