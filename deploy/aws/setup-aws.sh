@@ -13,10 +13,10 @@ set -e
 # CONFIGURATION - EDIT THESE
 # ============================================
 AWS_REGION="ap-south-1"
-ACCOUNT_ID="YOUR_AWS_ACCOUNT_ID"
+ACCOUNT_ID="AKIA3J4NVIJKJNYX5VPB"
 GITHUB_REPO="kredoworks/fixed-asset-api"
 ECR_REPO_NAME="fixed-asset-api"
-KEY_PAIR_NAME="fixed-asset-api-key"  # Must exist already
+KEY_PAIR_NAME="my-vpc-01 production kp"  # Must exist already
 INSTANCE_TYPE="t3.small"
 AMI_ID="ami-03f4878755434977f"  # Ubuntu 22.04 in ap-south-1
 
