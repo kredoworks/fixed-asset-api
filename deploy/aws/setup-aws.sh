@@ -13,7 +13,7 @@ set -e
 # CONFIGURATION - EDIT THESE
 # ============================================
 AWS_REGION="ap-south-1"
-ACCOUNT_ID="AKIA3J4NVIJKJNYX5VPB"
+ACCOUNT_ID="777149301332"
 GITHUB_REPO="kredoworks/fixed-asset-api"
 ECR_REPO_NAME="fixed-asset-api"
 KEY_PAIR_NAME="my-vpc-01 production kp"  # Must exist already

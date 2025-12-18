@@ -47,6 +47,7 @@ venv.bak/
 .env.*.local
 .env.staging
 .env.production
+.secrets.local
 
 # Testing
 .pytest_cache/
