@@ -183,9 +183,13 @@ jobs:
                 db:
                   condition: service_healthy
               environment:
-                DATABASE_URL: postgresql+asyncpg://postgres:\${POSTGRES_PASSWORD}@db:5432/fixed_asset_db
+                APP_ENV: prod
+                DB_HOST: db
+                DB_PORT: 5432
+                DB_USER: postgres
+                DB_PASSWORD: \${POSTGRES_PASSWORD}
+                DB_NAME: fixed_asset_db
                 SECRET_KEY: \${SECRET_KEY}
-                CORS_ORIGINS: [\"*\"]
               ports:
                 - \"7400:8000\"
               networks:
