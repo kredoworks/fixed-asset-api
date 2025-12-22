@@ -10,7 +10,8 @@ param(
     [string]$AwsAccountId = "777149301332",
     [string]$EcrRepository = "fixed-asset-api",
     [string]$PostgresPassword = "1234567",
-    [string]$SecretKey
+    [string]$SecretKey = "0f3029c4b7c475449d01beb39d0a63554310b178299c4261e3b91750e4738810
+"
 )
 
 # Check if gh is installed

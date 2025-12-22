@@ -95,7 +95,7 @@ jobs:
         id: check-ec2
         run: |
           INSTANCE_ID=$(aws ec2 describe-instances \
-            --filters "Name=tag:Project,Values=fixed-asset-api" \
+            --filters "Name=tag:Name,Values=fixed-asset-api" \
                       "Name=instance-state-name,Values=running,pending" \
             --query 'Reservations[0].Instances[0].InstanceId' \
             --output text)
@@ -153,7 +153,7 @@ jobs:
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
             --parameters "commands=[
-              'cd /opt/app',
+              'mkdir -p /opt/fixed-asset-api && cd /opt/fixed-asset-api',
               'cat > docker-compose.prod.yml << EOF
           version: \"3.8\"
           services:
@@ -222,7 +222,7 @@ jobs:
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
             --parameters "commands=[
-              'cd /opt/app',
+              'mkdir -p /opt/fixed-asset-api && cd /opt/fixed-asset-api',
               'aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}',
               'docker compose -f docker-compose.prod.yml pull',
               'docker compose -f docker-compose.prod.yml up -d',
