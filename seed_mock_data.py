@@ -28,7 +28,8 @@ from core.security import get_password_hash
 
 def get_sync_db_url():
     """Convert async URL to sync URL for psycopg2"""
-    url = str(settings.DATABASE_URL)
+    # Allow override via DATABASE_URL env var
+    url = os.environ.get("DATABASE_URL") or str(settings.DATABASE_URL)
     if url.startswith("postgresql+asyncpg"):
         return url.replace("postgresql+asyncpg", "postgresql")
     return url
@@ -268,8 +269,8 @@ def seed_database():
             cycle_id = cur.fetchone()[0]
             cycle_ids[cycle["tag"]] = cycle_id
 
-            status_icon = "🔒" if cycle["status"] == "LOCKED" else "🟢"
-            print(f"  {status_icon} {cycle['tag']} [{cycle['status']}] -> id={cycle_id}")
+            status_icon = "[LOCKED]" if cycle["status"] == "LOCKED" else "[ACTIVE]"
+            print(f"  {status_icon} {cycle['tag']} -> id={cycle_id}")
 
         conn.commit()
         print(f"\n  Created {len(CYCLES)} verification cycles.")
@@ -315,7 +316,7 @@ def seed_database():
             verification_count += 1
 
         conn.commit()
-        print(f"    ✓ 14 assets verified by owners and auditors")
+        print(f"    [OK] 14 assets verified by owners and auditors")
 
         # --- Q1-2025: Mixed results with issues found ---
         print("\n  [Q1-2025] Previous cycle - some issues found:")
@@ -364,10 +365,10 @@ def seed_database():
             verification_count += 1
 
             if status in ("DISCREPANCY", "NOT_FOUND"):
-                print(f"    ⚠ {code}: {status} - {notes}")
+                print(f"    [WARN] {code}: {status} - {notes}")
 
         conn.commit()
-        print(f"    ✓ 14 verifications (2 discrepancies, 2 not found)")
+        print(f"    [OK] 14 verifications (2 discrepancies, 2 not found)")
 
         # =================================================================
         # STEP 5: OVERRIDES - Auditors correct issues
@@ -396,7 +397,7 @@ def seed_database():
              q1_time + timedelta(days=5), q1_time + timedelta(days=5))
         )
         verification_count += 1
-        print(f"  ✓ IT-LAP-003: DISCREPANCY → VERIFIED (screen repaired)")
+        print(f"  [OK] IT-LAP-003: DISCREPANCY -> VERIFIED (screen repaired)")
 
         # Override 2: IT-MON-002 was NOT_FOUND but later located
         original_id = q1_verification_ids["IT-MON-002"]
@@ -417,7 +418,7 @@ def seed_database():
              q1_time + timedelta(days=7), q1_time + timedelta(days=7))
         )
         verification_count += 1
-        print(f"  ✓ IT-MON-002: NOT_FOUND → VERIFIED (found in storage)")
+        print(f"  [OK] IT-MON-002: NOT_FOUND -> VERIFIED (found in storage)")
 
         conn.commit()
 
@@ -480,9 +481,9 @@ def seed_database():
         verification_count += 1
 
         conn.commit()
-        print(f"    ✓ 5 assets verified, 1 discrepancy reported")
-        print(f"    ✓ 1 new asset discovered (AV-PRJ-001)")
-        print(f"    ⏳ 9 assets still pending verification")
+        print(f"    [OK] 5 assets verified, 1 discrepancy reported")
+        print(f"    [OK] 1 new asset discovered (AV-PRJ-001)")
+        print(f"    [PENDING] 9 assets still pending verification")
 
         # =================================================================
         # SUMMARY
