@@ -148,67 +148,24 @@ jobs:
           echo "Deploying to instance: $INSTANCE_ID"
           echo "Image tag: $IMAGE_TAG"
 
-          # Create docker-compose and .env on EC2
+          # Encode docker-compose.prod.yml as base64 to preserve ${VAR} syntax
+          COMPOSE_B64=$(base64 -w0 docker-compose.prod.yml)
+
+          # Create .env content and encode
+          cat > /tmp/env_file << ENVEOF
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          SECRET_KEY=${{ secrets.SECRET_KEY }}
+          ECR_REGISTRY=${{ env.ECR_REGISTRY }}
+          ECR_REPOSITORY=${{ env.ECR_REPOSITORY }}
+          IMAGE_TAG=${IMAGE_TAG:-latest}
+          ENVEOF
+          ENV_B64=$(base64 -w0 /tmp/env_file)
+
+          # Create docker-compose and .env on EC2 via SSM
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
-            --parameters "commands=[
-              'mkdir -p /opt/fixed-asset-api && cd /opt/fixed-asset-api',
-              'cat > docker-compose.prod.yml << EOF
-          version: \"3.8\"
-          services:
-            db:
-              image: postgres:15-alpine
-              container_name: fixed_asset_db
-              restart: unless-stopped
-              environment:
-                POSTGRES_USER: postgres
-                POSTGRES_PASSWORD: \${POSTGRES_PASSWORD}
-                POSTGRES_DB: fixed_asset_db
-              volumes:
-                - postgres_data:/var/lib/postgresql/data
-              healthcheck:
-                test: [\"CMD-SHELL\", \"pg_isready -U postgres\"]
-                interval: 10s
-                timeout: 5s
-                retries: 5
-              networks:
-                - app_network
-
-            api:
-              image: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${IMAGE_TAG:-latest}
-              container_name: fixed_asset_api
-              restart: unless-stopped
-              depends_on:
-                db:
-                  condition: service_healthy
-              environment:
-                APP_ENV: prod
-                DB_HOST: db
-                DB_PORT: 5432
-                DB_USER: postgres
-                DB_PASSWORD: \${POSTGRES_PASSWORD}
-                DB_NAME: fixed_asset_db
-                SECRET_KEY: \${SECRET_KEY}
-              ports:
-                - \"7400:8000\"
-              networks:
-                - app_network
-
-          volumes:
-            postgres_data:
-              name: fixed_asset_postgres_data
-
-          networks:
-            app_network:
-              name: fixed_asset_network
-          EOF',
-              'cat > .env << EOF
-          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
-          SECRET_KEY=${{ secrets.SECRET_KEY }}
-          EOF',
-              'chmod 600 .env'
-            ]" \
+            --parameters commands="[\"mkdir -p /opt/fixed-asset-api && cd /opt/fixed-asset-api && echo ${COMPOSE_B64} | base64 -d > docker-compose.prod.yml && echo ${ENV_B64} | base64 -d > .env && chmod 600 .env && cat docker-compose.prod.yml | head -20\"]" \
             --query 'Command.CommandId' \
             --output text)
 
